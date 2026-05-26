@@ -54,8 +54,19 @@ class SiLRIPolicy(
 
         dataset_stats=self.config.dataset_stats
 
-        # Determine action dimension and initialize all components
-        continuous_action_dim = config.output_features["action"].shape[0]
+        # Determine action dimension and initialize all components. When the gripper
+        # is represented by a discrete actor, the dataset action is
+        # [continuous_arm..., discrete_gripper], so the continuous policy only owns
+        # the leading action dimensions.
+        total_action_dim = config.output_features["action"].shape[0]
+        continuous_action_dim = total_action_dim
+        if config.num_discrete_actions is not None:
+            continuous_action_dim = total_action_dim - 1
+            if continuous_action_dim <= 0:
+                raise ValueError(
+                    "num_discrete_actions expects one trailing discrete action "
+                    f"dimension, got action shape {config.output_features['action'].shape}"
+                )
         self.continuous_action_dim = continuous_action_dim
         
         self._init_normalization(dataset_stats)
@@ -913,4 +924,3 @@ class ValueEnsemble(nn.Module):
         # q_values = torch.stack([q.squeeze(-1) for q in q_values], dim=0)
         q_values = self.output_normalization(q_values)
         return q_values
-
