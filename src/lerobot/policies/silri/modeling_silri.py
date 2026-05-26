@@ -532,7 +532,7 @@ class SiLRIPolicy(
             network=MLP(input_dim=self.encoder_actor.output_dim, **asdict(self.config.actor_network_kwargs)),
             action_dim=continuous_action_dim,
             encoder_is_shared=self.shared_encoder,
-            fixed_std=torch.tensor([5e-2]).to("cuda:0"),
+            fixed_std=torch.tensor([5e-2], device=self.config.device),
             **asdict(self.config.policy_kwargs),
         )
         if self.config.num_discrete_actions is not None:
@@ -543,7 +543,7 @@ class SiLRIPolicy(
             network=MLP(input_dim=self.encoder_actor.output_dim, **asdict(self.config.actor_network_kwargs)),
             action_dim=continuous_action_dim,
             encoder_is_shared=self.shared_encoder,
-            fixed_std=torch.tensor([5e-2]).to("cuda:0"),
+            fixed_std=torch.tensor([5e-2], device=self.config.device),
             **asdict(self.config.policy_kwargs),
         )
         self.actor_target.load_state_dict(self.actor.state_dict())
@@ -913,5 +913,4 @@ class ValueEnsemble(nn.Module):
         # q_values = torch.stack([q.squeeze(-1) for q in q_values], dim=0)
         q_values = self.output_normalization(q_values)
         return q_values
-
 
