@@ -458,14 +458,17 @@ class SiLRIPolicy(
         q_scale = min_q_preds.detach().abs().mean().clamp_min(1e-6)
         rl_term = min_q_preds / q_scale
 
-        # BC term ||pi-expert||_2 already has ~unit-magnitude gradient (L2 form), so
-        # keep it raw in v1. Two optional knobs (OFF by default, read via getattr so no
-        # config-schema change): actor_bc_scale>0 divides BC by a fixed ref scale to
-        # amplify the pull-back if A still won't drop; actor_lambda_floor>0 keeps a
-        # minimum BC weight even as lambda -> 0.
-        bc_scale = getattr(self.config, "actor_bc_scale", 0.0)
+        # [knife-B v2] The raw BC term (||pi-expert|| ~0.1) was too weak to move A even
+        # after knife-C let lambda climb, because measured |Q|~1 (not the assumed 2-10)
+        # made the v1 Q-normalization near-neutral. Turn the two BC-bite knobs ON
+        # (default 0.1, still getattr-overridable -> no config-schema change):
+        #   actor_bc_scale=0.1     -> bc_term = ||pi-expert|| / 0.1  (~10x stronger pull)
+        #   actor_lambda_floor=0.1 -> keep a minimum BC weight even as lambda -> 0
+        # Goal: pull the continuous actor onto the demo descend+grasp trajectory
+        # (A 0.36 -> ~0.1). Tuning: SMALLER bc_scale = stronger BC; set both 0.0 = v1.
+        bc_scale = getattr(self.config, "actor_bc_scale", 0.1)
         bc_term = combine_BC / bc_scale if (bc_scale and bc_scale > 0.0) else combine_BC
-        lambda_floor = getattr(self.config, "actor_lambda_floor", 0.0)
+        lambda_floor = getattr(self.config, "actor_lambda_floor", 0.1)
         lam = lagrange_multiplier + lambda_floor
 
         actor_loss  = (rl_term + bc_term * lam) / (1 + lam)
