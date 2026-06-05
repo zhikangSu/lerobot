@@ -321,6 +321,10 @@ class SiLRIPolicy(
         with torch.no_grad():
           
             _, actions_expert, expert_std = self.expert_network.get_dist(observations, observation_features)
+            # [knife-C] Floor/cap the expert std so the allowed band cannot collapse to
+            # ~0 (a near-deterministic expert learned from few demos) and degenerate into
+            # the bare 0.2 margin constant. A ~0.005/dim floor keeps a real tolerance band.
+            expert_std = expert_std.clamp(0.005, 0.03)
             allow_distance = expert_std.sum(dim=-1)
             _, _, actions_model = self.actor(observations, observation_features)
             
@@ -328,7 +332,10 @@ class SiLRIPolicy(
             cost_dev = mean_distance - allow_distance
 
 
-            cost_dev = cost_dev - 0.2
+            # [knife-C] Shrink the dead-zone margin 0.2 -> 0.04 (~ the BC-pretrain error
+            # scale). An actor drifted ~3x past BC error (e.g. 0.118) now actually violates
+            # the constraint and drives lambda up, instead of being treated as 'in band'.
+            cost_dev = cost_dev - 0.04
 
         lagrange_multiplier = self.lagrange_net(observations, observation_features=observation_features)
         lagrange_multiplier = lagrange_multiplier.squeeze(-1)
