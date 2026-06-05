@@ -123,8 +123,10 @@ class SiLRIPolicy(
             # Cache and normalize image features
 
             observations_features = self.actor.encoder.get_cached_image_features(batch, normalize=True)
-        # actor网络生成当前观测对应的基础动作
-        actions, *_ = self.actor(batch, observations_features)
+        # Use the deterministic policy mean for real-robot execution. Exploration
+        # comes from online learning and human interventions; sampling here injects
+        # per-tick joint noise that is unsafe on hardware.
+        _, _, actions = self.actor(batch, observations_features)
 
         epsilon = 1e-6
         actions = torch.clamp(actions, -1+epsilon, 1-epsilon)
