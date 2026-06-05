@@ -448,7 +448,27 @@ class SiLRIPolicy(
 
         min_q_preds = - q_preds.min(dim=0)[0]
 
-        actor_loss  = (min_q_preds + combine_BC * lagrange_multiplier) / (1 + lagrange_multiplier)
+        # [knife-B v1] Dynamically normalize the RL term (-min Q) by its detached
+        # batch-mean magnitude. Raw -Q is ~2-10 and drifts up during training, which
+        # swamps the BC term so the now-alive (post knife-C) lambda can't translate
+        # into a real pull-back toward the expert. Dividing by a DETACHED scale
+        # rescales the Q *gradient* to ~O(1) without changing its direction -- the
+        # critic still ranks actions, it just no longer dictates update magnitude by
+        # raw reward scale. RL is NOT removed; paper Eq.10 structure is preserved.
+        q_scale = min_q_preds.detach().abs().mean().clamp_min(1e-6)
+        rl_term = min_q_preds / q_scale
+
+        # BC term ||pi-expert||_2 already has ~unit-magnitude gradient (L2 form), so
+        # keep it raw in v1. Two optional knobs (OFF by default, read via getattr so no
+        # config-schema change): actor_bc_scale>0 divides BC by a fixed ref scale to
+        # amplify the pull-back if A still won't drop; actor_lambda_floor>0 keeps a
+        # minimum BC weight even as lambda -> 0.
+        bc_scale = getattr(self.config, "actor_bc_scale", 0.0)
+        bc_term = combine_BC / bc_scale if (bc_scale and bc_scale > 0.0) else combine_BC
+        lambda_floor = getattr(self.config, "actor_lambda_floor", 0.0)
+        lam = lagrange_multiplier + lambda_floor
+
+        actor_loss  = (rl_term + bc_term * lam) / (1 + lam)
         actor_loss = actor_loss.mean()
 
         min_q_preds = min_q_preds.mean().detach()
@@ -459,8 +479,9 @@ class SiLRIPolicy(
         return {
             "loss_actor": actor_loss,
             "bc_loss": bc_loss.item(),
-            "min_q_preds": min_q_preds,
+            "min_q_preds": min_q_preds.item(),
             'lagrange_multiplier_value': lagrange_multiplier_value,
+            'q_scale': q_scale.item(),
         }
 
 
