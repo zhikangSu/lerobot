@@ -441,7 +441,17 @@ class SiLRIPolicy(
 
         min_q_preds = - q_preds.min(dim=0)[0]
 
-        actor_loss  = (min_q_preds + combine_BC * lagrange_multiplier) / (1 + lagrange_multiplier)
+        # [TEMP usability BC anchor — NOT paper SiLRI; remove once reward-shaping fixes
+        # the critic] lambda(s) collapses to ~0 here because the actor already clones the
+        # expert net (constraint never violated) -> pure RL on the still-broken critic
+        # drifts the arm (observed: trends up). A small lambda floor + BC amplification
+        # keep enough BC weight that the policy holds the BALANCED demo trajectory
+        # (descend -> grasp -> lift, NOT descend-only). Set actor_bc_scale and
+        # actor_lambda_floor to 0.0 in config to restore paper-faithful SiLRI.
+        bc_scale = getattr(self.config, "actor_bc_scale", 0.1)
+        lam = lagrange_multiplier + getattr(self.config, "actor_lambda_floor", 0.1)
+        bc_term = combine_BC / bc_scale if (bc_scale and bc_scale > 0.0) else combine_BC
+        actor_loss  = (min_q_preds + bc_term * lam) / (1 + lam)
         actor_loss = actor_loss.mean()
 
         min_q_preds = min_q_preds.mean().detach()
