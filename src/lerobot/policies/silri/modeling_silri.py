@@ -321,10 +321,6 @@ class SiLRIPolicy(
         with torch.no_grad():
           
             _, actions_expert, expert_std = self.expert_network.get_dist(observations, observation_features)
-            # [knife-C] Floor/cap the expert std so the allowed band cannot collapse to
-            # ~0 (a near-deterministic expert learned from few demos) and degenerate into
-            # the bare 0.2 margin constant. A ~0.005/dim floor keeps a real tolerance band.
-            expert_std = expert_std.clamp(0.005, 0.03)
             allow_distance = expert_std.sum(dim=-1)
             _, _, actions_model = self.actor(observations, observation_features)
             
@@ -332,10 +328,7 @@ class SiLRIPolicy(
             cost_dev = mean_distance - allow_distance
 
 
-            # [knife-C] Shrink the dead-zone margin 0.2 -> 0.04 (~ the BC-pretrain error
-            # scale). An actor drifted ~3x past BC error (e.g. 0.118) now actually violates
-            # the constraint and drives lambda up, instead of being treated as 'in band'.
-            cost_dev = cost_dev - 0.04
+            cost_dev = cost_dev - 0.2
 
         lagrange_multiplier = self.lagrange_net(observations, observation_features=observation_features)
         lagrange_multiplier = lagrange_multiplier.squeeze(-1)
@@ -448,30 +441,7 @@ class SiLRIPolicy(
 
         min_q_preds = - q_preds.min(dim=0)[0]
 
-        # [knife-B v1] Dynamically normalize the RL term (-min Q) by its detached
-        # batch-mean magnitude. Raw -Q is ~2-10 and drifts up during training, which
-        # swamps the BC term so the now-alive (post knife-C) lambda can't translate
-        # into a real pull-back toward the expert. Dividing by a DETACHED scale
-        # rescales the Q *gradient* to ~O(1) without changing its direction -- the
-        # critic still ranks actions, it just no longer dictates update magnitude by
-        # raw reward scale. RL is NOT removed; paper Eq.10 structure is preserved.
-        q_scale = min_q_preds.detach().abs().mean().clamp_min(1e-6)
-        rl_term = min_q_preds / q_scale
-
-        # [knife-B v2] The raw BC term (||pi-expert|| ~0.1) was too weak to move A even
-        # after knife-C let lambda climb, because measured |Q|~1 (not the assumed 2-10)
-        # made the v1 Q-normalization near-neutral. Turn the two BC-bite knobs ON
-        # (default 0.1, still getattr-overridable -> no config-schema change):
-        #   actor_bc_scale=0.1     -> bc_term = ||pi-expert|| / 0.1  (~10x stronger pull)
-        #   actor_lambda_floor=0.1 -> keep a minimum BC weight even as lambda -> 0
-        # Goal: pull the continuous actor onto the demo descend+grasp trajectory
-        # (A 0.36 -> ~0.1). Tuning: SMALLER bc_scale = stronger BC; set both 0.0 = v1.
-        bc_scale = getattr(self.config, "actor_bc_scale", 0.1)
-        bc_term = combine_BC / bc_scale if (bc_scale and bc_scale > 0.0) else combine_BC
-        lambda_floor = getattr(self.config, "actor_lambda_floor", 0.1)
-        lam = lagrange_multiplier + lambda_floor
-
-        actor_loss  = (rl_term + bc_term * lam) / (1 + lam)
+        actor_loss  = (min_q_preds + combine_BC * lagrange_multiplier) / (1 + lagrange_multiplier)
         actor_loss = actor_loss.mean()
 
         min_q_preds = min_q_preds.mean().detach()
@@ -482,9 +452,8 @@ class SiLRIPolicy(
         return {
             "loss_actor": actor_loss,
             "bc_loss": bc_loss.item(),
-            "min_q_preds": min_q_preds.item(),
+            "min_q_preds": min_q_preds,
             'lagrange_multiplier_value': lagrange_multiplier_value,
-            'q_scale': q_scale.item(),
         }
 
 
