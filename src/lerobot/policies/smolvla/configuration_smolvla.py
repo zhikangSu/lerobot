@@ -69,6 +69,10 @@ class SmolVLAConfig(PreTrainedConfig):
     freeze_vision_encoder: bool = True
     train_expert_only: bool = True
     train_state_proj: bool = True
+    # Per-sample probability of zeroing the proprioceptive state during training,
+    # to break state->action shortcut when state == action[t-1] (e.g. when bags
+    # don't include true joint encoder feedback). 0.0 = disabled (original SmolVLA).
+    state_dropout_p: float = 0.0
 
     # Training presets
     optimizer_lr: float = 1e-4

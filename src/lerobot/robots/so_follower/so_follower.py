@@ -184,9 +184,13 @@ class SOFollower(Robot):
         logger.debug(f"{self} read state: {dt_ms:.1f}ms")
 
         # Capture images from cameras
+        # max_age_ms bumped from default 500 to 5000: tolerate stale frames during
+        # torch.compile warmup (inductor saturates the GIL → camera grab thread
+        # starves for several seconds). After warmup, real-time read latency is
+        # always <50ms so a relaxed cap is harmless.
         for cam_key, cam in self.cameras.items():
             start = time.perf_counter()
-            obs_dict[cam_key] = cam.read_latest()
+            obs_dict[cam_key] = cam.read_latest(max_age_ms=5000)
             dt_ms = (time.perf_counter() - start) * 1e3
             logger.debug(f"{self} read {cam_key}: {dt_ms:.1f}ms")
 

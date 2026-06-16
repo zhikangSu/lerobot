@@ -485,6 +485,12 @@ class SmolVLAPolicy(PreTrainedPolicy):
         """Pad state"""
         state = batch[OBS_STATE][:, -1, :] if batch[OBS_STATE].ndim > 2 else batch[OBS_STATE]
         state = pad_vector(state, self.config.max_state_dim)
+        # Per-sample state dropout: zeroes the entire state vector with prob p
+        # during training only. Forces the model to rely on vision+language for
+        # those samples, breaking the state==action[t-1] identity shortcut.
+        if self.training and self.config.state_dropout_p > 0:
+            keep = torch.rand(state.shape[0], 1, device=state.device) >= self.config.state_dropout_p
+            state = state * keep
         return state
 
     def prepare_action(self, batch):
